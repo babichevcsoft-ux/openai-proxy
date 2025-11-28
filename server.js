@@ -22,7 +22,7 @@ app.all('/proxy/*', async (req, res) => {
       // DeepSeek API
       targetUrl = `https://api.deepseek.com/${path}`;
       headers = {
-        'Authorization': 'Bearer sk-0f3d1382148a449297f23bd1c477438c',
+        'Authorization': 'Bearer ' + process.env.DEEPSEEK_KEY,
         'Content-Type': 'application/json'
       };
       console.log('🎯 Routing to DeepSeek API');
@@ -72,7 +72,7 @@ app.post('/deepseek/chat', async (req, res) => {
       method: 'POST',
       url: 'https://api.deepseek.com/v1/chat/completions',
       headers: {
-        'Authorization': 'Bearer sk-0f3d1382148a449297f23bd1c477438c',
+        'Authorization': 'Bearer ' + process.env.DEEPSEEK_KEY,
         'Content-Type': 'application/json'
       },
       data: req.body,
@@ -99,7 +99,7 @@ app.get('/deepseek/models', async (req, res) => {
       method: 'GET',
       url: 'https://api.deepseek.com/v1/models',
       headers: {
-        'Authorization': 'Bearer sk-0f3d1382148a449297f23bd1c477438c',
+        'Authorization': 'Bearer ' + process.env.DEEPSEEK_KEY,
         'Content-Type': 'application/json'
       },
       timeout: 30000
@@ -124,6 +124,10 @@ app.get('/', (req, res) => {
       openrouter: 'Use /proxy/* for OpenRouter (auto-detect)',
       deepseek_chat: 'Use /deepseek/chat for DeepSeek chat',
       deepseek_models: 'Use /deepseek/models for DeepSeek models'
+    },
+    environment: {
+      openrouter_key: process.env.OPENROUTER_KEY ? '✅ Set' : '❌ Missing',
+      deepseek_key: process.env.DEEPSEEK_KEY ? '✅ Set' : '❌ Missing'
     }
   });
 });
