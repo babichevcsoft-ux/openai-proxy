@@ -22,7 +22,7 @@ app.all('/proxy/*', async (req, res) => {
       method: req.method,
       url: targetUrl,
       headers: {
-        'Authorization': 'Bearer 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',
+        'Authorization': 'Bearer ' + process.env.OPENROUTER_KEY,
         'Content-Type': 'application/json',
         'HTTP-Referer': 'https://openai-proxy-gglw.onrender.com',
         'X-Title': 'Corporate AI Proxy'
