@@ -6,56 +6,137 @@ const https = require('https');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// Конфигурация GigaChat
-const GIGACHAT_CONFIG = {
-  baseUrl: 'https://gigachat.devices.sberbank.ru/api/v1',
-  authUrl: 'https://ngw.devices.sberbank.ru:9443/api/v2/oauth',
-  scope: 'GIGACHAT_API_PERS'
-};
-
-// Кэш для токена
-let gigachatTokenCache = {
-  token: null,
-  expiry: null
-};
-
-// Детальная диагностика аутентификации
+// Функция для получения токена GigaChat
 async function getGigaChatToken() {
   try {
     console.log('🔐 Getting GigaChat token...');
-    console.log('📝 GIGACHAT_KEY from env:', process.env.GIGACHAT_KEY ? 'Present' : 'Missing');
     
-    // Проверяем разные форматы ключа
-    let authHeader;
-    
-    if (process.env.GIGACHAT_KEY.startsWith('Basic ')) {
-      // Если ключ уже в формате Basic
-      authHeader = process.env.GIGACHAT_KEY;
-      console.log('🔑 Using pre-formatted Basic auth');
-    } else if (process.env.GIGACHAT_KEY.includes(':')) {
-      // Если ключ в формате client_id:client_secret
-      const base64Credentials = Buffer.from(process.env.GIGACHAT_KEY).toString('base64');
-      authHeader = `Basic ${base64Credentials}`;
-      console.log('🔑 Encoded credentials to Base64');
-    } else {
-      // Если это просто Authorization Key (уже base64)
-      authHeader = `Basic ${process.env.GIGACHAT_KEY}`;
-      console.log('🔑 Using as direct Base64 key');
-    }
-    
-    console.log('🔐 Auth header preview:', authHeader.substring(0, 20) + '...');
+    // Генерируем RqUID как в примере от Сбера
+    const rqUID = generateRqUID();
     
     const response = await axios.post(
-      GIGACHAT_CONFIG.authUrl,
-      `scope=${GIGACHAT_CONFIG.scope}`,
+      'https://ngw.devices.sberbank.ru:9443/api/v2/oauth',
+      'scope=GIGACHAT_API_PERS',
       {
         headers: {
-          'Authorization': authHeader,
+          'Authorization': `Basic ${process.env.GIGACHAT_KEY}`,
           'Content-Type': 'application/x-www-form-urlencoded',
+          'Accept': 'application/json',
+          'RqUID': rqUID
+        },
+        httpsAgent: new https.Agent({
+          rejectUnauthorized: false
+        }),
+        timeout: 10000
+      }
+    );
+    
+    console.log('✅ Token received successfully!');
+    return response.data.access_token;
+  } catch (error) {
+    console.error('❌ Authentication failed:');
+    console.error('Status:', error.response?.status);
+    console.error('Error data:', error.response?.data);
+    console.error('Request headers:', error.config?.headers);
+    throw error;
+  }
+}
+
+// Генерация RqUID как в примере Сбера
+function generateRqUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c == 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
+// Тестовый endpoint для проверки аутентификации
+app.get('/test-auth', async (req, res) => {
+  try {
+    console.log('🧪 Testing GigaChat authentication...');
+    
+    if (!process.env.GIGACHAT_KEY) {
+      return res.status(400).json({ 
+        error: 'GIGACHAT_KEY not set',
+        instruction: 'Add GIGACHAT_KEY to environment variables with your Authorization Key from Sber'
+      });
+    }
+    
+    console.log('🔑 Using Authorization Key from environment');
+    
+    const token = await getGigaChatToken();
+    
+    res.json({
+      success: true,
+      message: 'GigaChat authentication successful!',
+      token_preview: token.substring(0, 20) + '...',
+      token_length: token.length,
+      expires_in: '30 minutes'
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: 'GigaChat authentication failed',
+      details: error.response?.data || error.message,
+      instruction: 'Check that GIGACHAT_KEY contains the exact Authorization Key from Sber AI Platform'
+    });
+  }
+});
+
+// Основной чат endpoint
+app.post('/v1/chat/completions', async (req, res) => {
+  try {
+    console.log('💬 Chat request received');
+    console.log('Model:', req.body?.model);
+    
+    const token = await getGigaChatToken();
+    
+    const response = await axios.post(
+      'https://gigachat.devices.sberbank.ru/api/v1/chat/completions',
+      req.body,
+      {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        httpsAgent: new https.Agent({
+          rejectUnauthorized: false
+        }),
+        timeout: 30000
+      }
+    );
+    
+    console.log('✅ Chat response received');
+    res.json(response.data);
+  } catch (error) {
+    console.error('❌ Chat error:');
+    console.error('Status:', error.response?.status);
+    console.error('Error:', error.response?.data);
+    
+    res.status(error.response?.status || 500).json({
+      error: 'GigaChat API error',
+      details: error.response?.data || error.message
+    });
+  }
+});
+
+// Получение списка моделей
+app.get('/v1/models', async (req, res) => {
+  try {
+    console.log('📋 Getting models list...');
+    
+    const token = await getGigaChatToken();
+    
+    const response = await axios.get(
+      'https://gigachat.devices.sberbank.ru/api/v1/models',
+      {
+        headers: {
+          'Authorization': `Bearer ${token}`,
           'Accept': 'application/json'
         },
         httpsAgent: new https.Agent({
@@ -65,181 +146,60 @@ async function getGigaChatToken() {
       }
     );
     
-    console.log('✅ GigaChat token received successfully');
-    console.log('⏰ Token expires in:', response.data.expires_in, 'seconds');
-    
-    return response.data.access_token;
+    console.log('✅ Models list received');
+    res.json(response.data);
   } catch (error) {
-    console.error('❌ GigaChat token error details:');
-    console.error('Status:', error.response?.status);
-    console.error('Headers sent:', error.config?.headers?.Authorization ? 'Yes' : 'No');
-    console.error('Error data:', error.response?.data);
-    
-    throw new Error(`GigaChat auth failed: ${error.response?.data?.error_description || error.response?.data || error.message}`);
-  }
-}
-
-// Получение токена с кэшированием
-async function getCachedGigaChatToken() {
-  const now = Date.now();
-  if (gigachatTokenCache.token && gigachatTokenCache.expiry > now) {
-    console.log('🔑 Using cached GigaChat token');
-    return gigachatTokenCache.token;
-  }
-  
-  const token = await getGigaChatToken();
-  gigachatTokenCache = {
-    token: token,
-    expiry: now + 25 * 60 * 1000 // 25 minutes
-  };
-  
-  return token;
-}
-
-// Основной endpoint для чата
-app.post('/v1/chat/completions', async (req, res) => {
-  console.log('📨 Received chat request');
-  console.log('📝 Request model:', req.body?.model);
-  
-  try {
-    const token = await getCachedGigaChatToken();
-    
-    const response = await axios({
-      method: 'POST',
-      url: `${GIGACHAT_CONFIG.baseUrl}/chat/completions`,
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      data: req.body,
-      timeout: 30000,
-      httpsAgent: new https.Agent({
-        rejectUnauthorized: false
-      })
-    });
-
-    console.log('✅ GigaChat response status:', response.status);
-    res.status(response.status).json(response.data);
-    
-  } catch (error) {
-    console.error('❌ GigaChat API error:');
-    console.error('Status:', error.response?.status);
-    console.error('Error data:', error.response?.data);
-    
-    res.status(error.response?.status || 500).json({ 
-      error: 'GigaChat API error',
-      message: error.message,
-      details: error.response?.data || 'No response details'
-    });
-  }
-});
-
-// Получение списка моделей
-app.get('/v1/models', async (req, res) => {
-  console.log('📋 Getting GigaChat models list');
-  
-  try {
-    const token = await getCachedGigaChatToken();
-    
-    const response = await axios({
-      method: 'GET',
-      url: `${GIGACHAT_CONFIG.baseUrl}/models`,
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Accept': 'application/json'
-      },
-      timeout: 30000,
-      httpsAgent: new https.Agent({
-        rejectUnauthorized: false
-      })
-    });
-
-    console.log('✅ Models response status:', response.status);
-    res.status(response.status).json(response.data);
-  } catch (error) {
-    console.error('❌ GigaChat models error:', error.response?.data);
-    res.status(500).json({ 
-      error: 'GigaChat models API error',
-      details: error.response?.data 
-    });
-  }
-});
-
-// Диагностический endpoint для тестирования аутентификации
-app.get('/debug/auth', async (req, res) => {
-  try {
-    console.log('🔧 Debug auth endpoint called');
-    
-    const token = await getGigaChatToken();
-    
-    res.json({
-      status: 'SUCCESS',
-      message: 'GigaChat authentication working',
-      token_preview: token ? `${token.substring(0, 20)}...` : 'No token',
-      token_length: token ? token.length : 0
-    });
-  } catch (error) {
+    console.error('❌ Models error:', error.response?.data);
     res.status(500).json({
-      status: 'FAILED',
-      message: error.message,
-      gigachat_key_format: process.env.GIGACHAT_KEY ? 'Present' : 'Missing',
-      key_preview: process.env.GIGACHAT_KEY ? `${process.env.GIGACHAT_KEY.substring(0, 30)}...` : 'No key'
+      error: 'Failed to get models',
+      details: error.response?.data
     });
   }
 });
 
 // Health check
-app.get('/health', async (req, res) => {
-  const health = {
+app.get('/health', (req, res) => {
+  res.json({
     status: 'OK',
     service: 'GigaChat Corporate Proxy',
     timestamp: new Date().toISOString(),
     environment: {
-      gigachat_key: process.env.GIGACHAT_KEY ? '✅ Present' : '❌ Missing',
-      key_length: process.env.GIGACHAT_KEY ? process.env.GIGACHAT_KEY.length : 0
+      gigachat_key: process.env.GIGACHAT_KEY ? '✅ Set' : '❌ Missing',
+      key_preview: process.env.GIGACHAT_KEY ? 
+        `${process.env.GIGACHAT_KEY.substring(0, 15)}...` : 'No key'
+    },
+    endpoints: {
+      test_auth: 'GET /test-auth',
+      chat: 'POST /v1/chat/completions',
+      models: 'GET /v1/models'
     }
-  };
-  
-  // Проверяем аутентификацию
-  if (process.env.GIGACHAT_KEY) {
-    try {
-      const token = await getGigaChatToken();
-      health.authentication = '✅ Working';
-      health.token_info = {
-        preview: `${token.substring(0, 15)}...`,
-        length: token.length
-      };
-    } catch (error) {
-      health.authentication = `❌ Failed: ${error.message}`;
-    }
-  }
-  
-  res.json(health);
+  });
 });
 
-// Root endpoint
 app.get('/', (req, res) => {
-  res.json({ 
-    status: 'OK', 
-    message: 'GigaChat Corporate Proxy is running',
-    endpoints: {
-      chat: 'POST /v1/chat/completions',
-      models: 'GET /v1/models',
-      health: 'GET /health',
-      debug: 'GET /debug/auth'
-    },
-    troubleshooting: {
-      check_key_format: 'Ensure GIGACHAT_KEY is in correct format',
-      expected_formats: [
-        'Authorization Key (Base64) directly from GigaChat console',
-        'ClientID:ClientSecret (will be encoded to Base64)'
-      ]
+  res.json({
+    service: 'GigaChat Corporate Proxy',
+    status: 'Running',
+    documentation: {
+      authentication: 'Uses Authorization Key from Sber AI Platform',
+      key_format: 'Should be the exact Authorization Key provided by Sber',
+      example_request: {
+        method: 'POST',
+        url: '/v1/chat/completions',
+        body: {
+          model: "GigaChat-Pro",
+          messages: [
+            {"role": "user", "content": "Привет!"}
+          ],
+          temperature: 0.7,
+          max_tokens: 1000
+        }
+      }
     }
   });
 });
 
 app.listen(PORT, () => {
   console.log(`🚀 GigaChat Corporate Proxy running on port ${PORT}`);
-  console.log(`🔗 Debug endpoint: /debug/auth`);
+  console.log(`🔐 Using Sber Authorization Key authentication`);
 });
