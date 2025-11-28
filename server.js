@@ -9,17 +9,19 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// Простой прокси для OpenAI
+// Прокси для OpenRouter
 app.all('/proxy/*', async (req, res) => {
   try {
-    const openaiUrl = req.url.replace('/proxy/', 'https://api.openai.com/');
+    const targetUrl = req.url.replace('/proxy/', 'https://openrouter.ai/api/');
     
     const response = await axios({
       method: req.method,
-      url: openaiUrl,
+      url: targetUrl,
       headers: {
-        'Authorization': req.headers.authorization,
-        'Content-Type': 'application/json'
+        'Authorization': 'Bearer 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',
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://your-proxy.render.com',
+        'X-Title': 'Corporate AI Proxy'
       },
       data: req.body,
       timeout: 30000
@@ -39,11 +41,11 @@ app.all('/proxy/*', async (req, res) => {
 app.get('/', (req, res) => {
   res.json({ 
     status: 'OK', 
-    message: 'OpenAI Proxy is running',
-    usage: 'Use /proxy/* to forward requests to OpenAI API'
+    message: 'OpenRouter Proxy is running',
+    usage: 'Use /proxy/* to forward requests to OpenRouter API'
   });
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Proxy server running on port ${PORT}`);
+  console.log(`🚀 OpenRouter Proxy server running on port ${PORT}`);
 });
