@@ -17,19 +17,37 @@ const GIGACHAT_CONFIG = {
   scope: 'GIGACHAT_API_PERS'
 };
 
-// Кэш для токена GigaChat
+// Кэш для токена
 let gigachatTokenCache = {
   token: null,
   expiry: null
 };
 
-// Получение токена для GigaChat
+// Детальная диагностика аутентификации
 async function getGigaChatToken() {
   try {
     console.log('🔐 Getting GigaChat token...');
+    console.log('📝 GIGACHAT_KEY from env:', process.env.GIGACHAT_KEY ? 'Present' : 'Missing');
     
-    // Используем Authorization Key из переменной окружения
-    const authHeader = `Basic ${process.env.GIGACHAT_KEY}`;
+    // Проверяем разные форматы ключа
+    let authHeader;
+    
+    if (process.env.GIGACHAT_KEY.startsWith('Basic ')) {
+      // Если ключ уже в формате Basic
+      authHeader = process.env.GIGACHAT_KEY;
+      console.log('🔑 Using pre-formatted Basic auth');
+    } else if (process.env.GIGACHAT_KEY.includes(':')) {
+      // Если ключ в формате client_id:client_secret
+      const base64Credentials = Buffer.from(process.env.GIGACHAT_KEY).toString('base64');
+      authHeader = `Basic ${base64Credentials}`;
+      console.log('🔑 Encoded credentials to Base64');
+    } else {
+      // Если это просто Authorization Key (уже base64)
+      authHeader = `Basic ${process.env.GIGACHAT_KEY}`;
+      console.log('🔑 Using as direct Base64 key');
+    }
+    
+    console.log('🔐 Auth header preview:', authHeader.substring(0, 20) + '...');
     
     const response = await axios.post(
       GIGACHAT_CONFIG.authUrl,
@@ -43,15 +61,21 @@ async function getGigaChatToken() {
         httpsAgent: new https.Agent({
           rejectUnauthorized: false
         }),
-        timeout: 10000
+        timeout: 15000
       }
     );
     
-    console.log('✅ GigaChat token received');
+    console.log('✅ GigaChat token received successfully');
+    console.log('⏰ Token expires in:', response.data.expires_in, 'seconds');
+    
     return response.data.access_token;
   } catch (error) {
-    console.error('❌ GigaChat token error:', error.response?.data || error.message);
-    throw new Error(`GigaChat auth failed: ${error.response?.data?.error_description || error.message}`);
+    console.error('❌ GigaChat token error details:');
+    console.error('Status:', error.response?.status);
+    console.error('Headers sent:', error.config?.headers?.Authorization ? 'Yes' : 'No');
+    console.error('Error data:', error.response?.data);
+    
+    throw new Error(`GigaChat auth failed: ${error.response?.data?.error_description || error.response?.data || error.message}`);
   }
 }
 
@@ -66,7 +90,7 @@ async function getCachedGigaChatToken() {
   const token = await getGigaChatToken();
   gigachatTokenCache = {
     token: token,
-    expiry: now + 25 * 60 * 1000 // 25 minutes cache
+    expiry: now + 25 * 60 * 1000 // 25 minutes
   };
   
   return token;
@@ -75,6 +99,7 @@ async function getCachedGigaChatToken() {
 // Основной endpoint для чата
 app.post('/v1/chat/completions', async (req, res) => {
   console.log('📨 Received chat request');
+  console.log('📝 Request model:', req.body?.model);
   
   try {
     const token = await getCachedGigaChatToken();
@@ -98,7 +123,9 @@ app.post('/v1/chat/completions', async (req, res) => {
     res.status(response.status).json(response.data);
     
   } catch (error) {
-    console.error('❌ GigaChat API error:', error.response?.data || error.message);
+    console.error('❌ GigaChat API error:');
+    console.error('Status:', error.response?.status);
+    console.error('Error data:', error.response?.data);
     
     res.status(error.response?.status || 500).json({ 
       error: 'GigaChat API error',
@@ -108,7 +135,7 @@ app.post('/v1/chat/completions', async (req, res) => {
   }
 });
 
-// Получение списка моделей GigaChat
+// Получение списка моделей
 app.get('/v1/models', async (req, res) => {
   console.log('📋 Getting GigaChat models list');
   
@@ -128,6 +155,7 @@ app.get('/v1/models', async (req, res) => {
       })
     });
 
+    console.log('✅ Models response status:', response.status);
     res.status(response.status).json(response.data);
   } catch (error) {
     console.error('❌ GigaChat models error:', error.response?.data);
@@ -138,21 +166,39 @@ app.get('/v1/models', async (req, res) => {
   }
 });
 
-// Health check с диагностикой
+// Диагностический endpoint для тестирования аутентификации
+app.get('/debug/auth', async (req, res) => {
+  try {
+    console.log('🔧 Debug auth endpoint called');
+    
+    const token = await getGigaChatToken();
+    
+    res.json({
+      status: 'SUCCESS',
+      message: 'GigaChat authentication working',
+      token_preview: token ? `${token.substring(0, 20)}...` : 'No token',
+      token_length: token ? token.length : 0
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 'FAILED',
+      message: error.message,
+      gigachat_key_format: process.env.GIGACHAT_KEY ? 'Present' : 'Missing',
+      key_preview: process.env.GIGACHAT_KEY ? `${process.env.GIGACHAT_KEY.substring(0, 30)}...` : 'No key'
+    });
+  }
+});
+
+// Health check
 app.get('/health', async (req, res) => {
   const health = {
     status: 'OK',
     service: 'GigaChat Corporate Proxy',
     timestamp: new Date().toISOString(),
     environment: {
-      gigachat_key: process.env.GIGACHAT_KEY ? '✅ Configured' : '❌ Missing'
-    },
-    features: [
-      'OAuth 2.0 Token Caching',
-      'Auto-token refresh',
-      'Corporate proxy compatible',
-      'SSL bypass for internal networks'
-    ]
+      gigachat_key: process.env.GIGACHAT_KEY ? '✅ Present' : '❌ Missing',
+      key_length: process.env.GIGACHAT_KEY ? process.env.GIGACHAT_KEY.length : 0
+    }
   };
   
   // Проверяем аутентификацию
@@ -160,7 +206,10 @@ app.get('/health', async (req, res) => {
     try {
       const token = await getGigaChatToken();
       health.authentication = '✅ Working';
-      health.token_preview = token ? `${token.substring(0, 15)}...` : 'No token';
+      health.token_info = {
+        preview: `${token.substring(0, 15)}...`,
+        length: token.length
+      };
     } catch (error) {
       health.authentication = `❌ Failed: ${error.message}`;
     }
@@ -177,27 +226,20 @@ app.get('/', (req, res) => {
     endpoints: {
       chat: 'POST /v1/chat/completions',
       models: 'GET /v1/models',
-      health: 'GET /health'
+      health: 'GET /health',
+      debug: 'GET /debug/auth'
     },
-    usage: {
-      example: {
-        method: 'POST',
-        url: '/v1/chat/completions',
-        body: {
-          model: "GigaChat-Pro",
-          messages: [
-            {"role": "user", "content": "Привет! Как дела?"}
-          ],
-          temperature: 0.7,
-          max_tokens: 1000
-        }
-      }
+    troubleshooting: {
+      check_key_format: 'Ensure GIGACHAT_KEY is in correct format',
+      expected_formats: [
+        'Authorization Key (Base64) directly from GigaChat console',
+        'ClientID:ClientSecret (will be encoded to Base64)'
+      ]
     }
   });
 });
 
 app.listen(PORT, () => {
   console.log(`🚀 GigaChat Corporate Proxy running on port ${PORT}`);
-  console.log(`🔗 Endpoints: /v1/chat/completions, /v1/models, /health`);
-  console.log(`🔐 OAuth 2.0 with token caching enabled`);
+  console.log(`🔗 Debug endpoint: /debug/auth`);
 });
